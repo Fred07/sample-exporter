@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
+	"math/rand"
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -13,26 +16,16 @@ import (
 
 // Exporter is a prometheus exporter
 type Exporter struct {
-	gauge       prometheus.Gauge
-	gaugeVec    prometheus.GaugeVec
-	testCounter prometheus.CounterVec
-	cpuUsage    prometheus.GaugeVec
-	memoryUsage prometheus.GaugeVec
+	gauge                prometheus.Gauge
+	gaugeVec             prometheus.GaugeVec
+	testCounter          prometheus.CounterVec
+	cpuUsage             prometheus.GaugeVec
+	memoryUsage          prometheus.GaugeVec
+	histogram            prometheus.HistogramVec
+	endpointsAccessTotal prometheus.CounterVec
 }
 
 func NewExporter(metricsPrefix string) *Exporter {
-	gauge := prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: metricsPrefix,
-		Name:      "Gauge",
-		Help:      "metric without label",
-	})
-
-	gaugeVec := *prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: metricsPrefix,
-		Name:      "GaugeVec",
-		Help:      "metric with label",
-	}, []string{"myLabel"})
-
 	testCounter := *prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricsPrefix,
 		Name:      "auto_increment_counter",
@@ -51,20 +44,29 @@ func NewExporter(metricsPrefix string) *Exporter {
 		Help:      "This is memory usage stats",
 	}, []string{"Label"})
 
+	histogram := *prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: metricsPrefix,
+		Name:      "histogram_test",
+		Buckets:   prometheus.LinearBuckets(20, 5, 5),
+		Help:      "histogram test",
+	}, []string{"Label"})
+
+	endpointsAccessTotal := *prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricsPrefix,
+		Name:      "endpoints_access",
+		Help:      "endpoints access",
+	}, []string{"path"})
+
 	return &Exporter{
-		gauge:       gauge,
-		gaugeVec:    gaugeVec,
-		testCounter: testCounter,
-		cpuUsage:    cpuUsage,
-		memoryUsage: memoryUsage,
+		testCounter:          testCounter,
+		cpuUsage:             cpuUsage,
+		memoryUsage:          memoryUsage,
+		histogram:            histogram,
+		endpointsAccessTotal: endpointsAccessTotal,
 	}
 }
 
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
-	e.gauge.Set(float64(0))
-	e.gaugeVec.WithLabelValues("label1").Set(float64(0))
-	e.gauge.Collect(ch)
-	e.gaugeVec.Collect(ch)
 	e.testCounter.WithLabelValues("labe1").Inc()
 	e.testCounter.Collect(ch)
 	cpuPercent, _ := cpu.Percent(0, false)
@@ -74,14 +76,25 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	memoryStats, _ := mem.VirtualMemory()
 	e.memoryUsage.WithLabelValues("label1").Set(memoryStats.UsedPercent)
 	e.memoryUsage.Collect(ch)
+
+	e.histogram.WithLabelValues("label_1").Observe(float64(100))
+	e.histogram.WithLabelValues("label_2").Observe(float64(50))
+	e.histogram.Collect(ch)
+
+	s1 := rand.NewSource(time.Now().Unix())
+	r1 := rand.New(s1)
+	e.endpointsAccessTotal.WithLabelValues("/v1/me").Add(math.Ceil(r1.Float64() * 10))
+	e.endpointsAccessTotal.WithLabelValues("/v1/users").Add(math.Ceil(r1.Float64() * 15))
+	e.endpointsAccessTotal.WithLabelValues("/v1/channels").Add(math.Ceil(r1.Float64() * 8))
+	e.endpointsAccessTotal.Collect(ch)
 }
 
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
-	e.gauge.Describe(ch)
-	e.gaugeVec.Describe(ch)
 	e.testCounter.Describe(ch)
 	e.cpuUsage.Describe(ch)
 	e.memoryUsage.Describe(ch)
+	e.histogram.Describe(ch)
+	e.endpointsAccessTotal.Describe(ch)
 }
 
 func main() {
